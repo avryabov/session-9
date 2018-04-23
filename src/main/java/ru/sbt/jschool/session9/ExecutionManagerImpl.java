@@ -2,15 +2,14 @@ package ru.sbt.jschool.session9;
 
 import java.util.Arrays;
 import java.util.Queue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class ExecutionManagerImpl implements ExecutionManager {
 
-    private ExecutorService executorService;
+    private volatile ExecutorService executorService;
     private AtomicInteger completedTaskCount = new AtomicInteger(0);
     private AtomicInteger failedTaskCount = new AtomicInteger(0);
     private AtomicInteger canceledTaskCount = new AtomicInteger(0);
@@ -18,36 +17,12 @@ public class ExecutionManagerImpl implements ExecutionManager {
     private volatile boolean interrupt = false;
     private volatile boolean isRunning = true;
 
-    public static void main(String[] args) {
-        ExecutionManagerImpl executionManager = new ExecutionManagerImpl();
-        Thread[] threads = new Thread[10];
-        for (int i = 0; i < threads.length; i++) {
-            int finalI = i;
-            threads[i] = new Thread() {
-                @Override
-                public void run() {
-                    try {
-                        Thread.sleep(finalI * 1000);
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
-                }
-            };
-        }
-        Context context = executionManager.execute(null, threads);
-        while (!context.isFinished()) {
-            System.out.println(context.getCompletedTaskCount());
-            System.out.println(context.getInterruptedTaskCount());
-            System.out.println(context.getFailedTaskCount());
-        }
-    }
-
     public Context execute(Runnable callback, Runnable... tasks) {
         executorService = Executors.newFixedThreadPool(tasks.length);
         Queue<Runnable> taskQueue = new LinkedBlockingQueue<>();
         taskQueue.addAll(Arrays.asList(tasks));
         new Thread(new TaskRunner(taskQueue, callback)).start();
-        return new ContextImpl();
+        return new ContextImpl(taskQueue);
     }
 
     private final class TaskObserver implements Runnable {
@@ -87,17 +62,32 @@ public class ExecutionManagerImpl implements ExecutionManager {
         @Override
         public void run() {
             while (!interrupt && taskQueue.size() > 0) {
-                Future futureTask = executorService.submit(taskQueue.poll());
-                new Thread(new TaskObserver(futureTask)).start();
+                try {
+                    Future futureTask = executorService.submit(taskQueue.poll());
+                    new Thread(new TaskObserver(futureTask)).start();
+                } catch (RejectedExecutionException e) {
+                    canceledTaskCount.incrementAndGet();
+                    break;
+                }
             }
             executorService.shutdown();
-            while (!executorService.isTerminated()) ;
+            try {
+                executorService.awaitTermination(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                new RuntimeException(e);
+            }
             isRunning = false;
             new Thread(callback).start();
         }
     }
 
     private final class ContextImpl implements Context {
+
+        private final Queue<Runnable> taskQueue;
+
+        private ContextImpl(Queue<Runnable> taskQueue) {
+            this.taskQueue = taskQueue;
+        }
 
 
         @Override
@@ -112,7 +102,7 @@ public class ExecutionManagerImpl implements ExecutionManager {
 
         @Override
         public int getInterruptedTaskCount() {
-            return canceledTaskCount.get();
+            return (canceledTaskCount.get() + taskQueue.size());
         }
 
         @Override
