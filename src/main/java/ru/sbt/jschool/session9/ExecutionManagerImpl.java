@@ -12,7 +12,6 @@ public class ExecutionManagerImpl implements ExecutionManager {
 
     private volatile ExecutorService executorService;
     private volatile LinkedBlockingQueue<Future> futureQueue;
-    private volatile Thread observerThread;
 
     private AtomicInteger completedTaskCount = new AtomicInteger(0);
     private AtomicInteger failedTaskCount = new AtomicInteger(0);
@@ -23,7 +22,6 @@ public class ExecutionManagerImpl implements ExecutionManager {
 
     public Context execute(Runnable callback, Runnable... tasks) {
         executorService = Executors.newFixedThreadPool(tasks.length);
-        observerThread = new Thread(new TaskObserver());
         futureQueue = new LinkedBlockingQueue<>();
         Queue<Runnable> taskQueue = new LinkedBlockingQueue<>();
         taskQueue.addAll(Arrays.asList(tasks));
@@ -43,7 +41,6 @@ public class ExecutionManagerImpl implements ExecutionManager {
 
         @Override
         public void run() {
-            observerThread.start();
             while (!interrupt && taskQueue.size() > 0) {
                 try {
                     Future futureTask = executorService.submit(taskQueue.poll());
@@ -66,26 +63,21 @@ public class ExecutionManagerImpl implements ExecutionManager {
         }
     }
 
-    private final class TaskObserver implements Runnable {
-        @Override
-        public void run() {
-            while (isRunning || futureQueue.size() > 0) {
-                Iterator<Future> iterator = futureQueue.iterator();
-                while (iterator.hasNext()) {
-                    Future f = iterator.next();
-                    if (f.isDone()) {
-                        try {
-                            f.get();
-                            completedTaskCount.incrementAndGet();
-                        } catch (Exception e) {
-                            failedTaskCount.incrementAndGet();
-                        }
-                        iterator.remove();
-                    } else if (f.isCancelled()) {
-                        canceledTaskCount.incrementAndGet();
-                        iterator.remove();
-                    }
+    private void getTasksStatus() {
+        Iterator<Future> iterator = futureQueue.iterator();
+        while (iterator.hasNext()) {
+            Future f = iterator.next();
+            if (f.isDone()) {
+                try {
+                    f.get();
+                    completedTaskCount.incrementAndGet();
+                } catch (Exception e) {
+                    failedTaskCount.incrementAndGet();
                 }
+                iterator.remove();
+            } else if (f.isCancelled()) {
+                canceledTaskCount.incrementAndGet();
+                iterator.remove();
             }
         }
     }
@@ -101,17 +93,20 @@ public class ExecutionManagerImpl implements ExecutionManager {
 
         @Override
         public int getCompletedTaskCount() {
+            getTasksStatus();
             return completedTaskCount.get();
         }
 
         @Override
         public int getFailedTaskCount() {
+            getTasksStatus();
             return failedTaskCount.get();
         }
 
         @Override
         public int getInterruptedTaskCount() {
-            return (canceledTaskCount.get() + taskQueue.size());
+            getTasksStatus();
+            return (canceledTaskCount.get() + (interrupt ? taskQueue.size() : 0));
         }
 
         @Override
@@ -122,7 +117,7 @@ public class ExecutionManagerImpl implements ExecutionManager {
 
         @Override
         public boolean isFinished() {
-            return !isRunning && !observerThread.isAlive();
+            return !isRunning;
         }
     }
 }
