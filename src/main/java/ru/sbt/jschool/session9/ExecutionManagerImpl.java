@@ -20,7 +20,7 @@ public class ExecutionManagerImpl implements ExecutionManager {
     private volatile boolean interrupt = false;
     private volatile boolean isRunning = true;
 
-    private int timeout;
+    private volatile int timeout;
 
     public ExecutionManagerImpl() {
         this.timeout = DEF_TIMEOUT;
