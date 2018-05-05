@@ -5,10 +5,10 @@ import java.util.Iterator;
 import java.util.Queue;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 
 public class ExecutionManagerImpl implements ExecutionManager {
+
+    private static final int DEF_TIMEOUT = 10;
 
     private volatile ExecutorService executorService;
     private volatile LinkedBlockingQueue<Future> futureQueue;
@@ -19,6 +19,24 @@ public class ExecutionManagerImpl implements ExecutionManager {
 
     private volatile boolean interrupt = false;
     private volatile boolean isRunning = true;
+
+    private int timeout;
+
+    public ExecutionManagerImpl() {
+        this.timeout = DEF_TIMEOUT;
+    }
+
+    public ExecutionManagerImpl(int timeout) {
+        this.timeout = timeout;
+    }
+
+    public int getTimeout() {
+        return timeout;
+    }
+
+    public void setTimeout(int timeout) {
+        this.timeout = timeout;
+    }
 
     public Context execute(Runnable callback, Runnable... tasks) {
         executorService = Executors.newFixedThreadPool(tasks.length);
@@ -54,7 +72,7 @@ public class ExecutionManagerImpl implements ExecutionManager {
             }
             executorService.shutdown();
             try {
-                executorService.awaitTermination(10, TimeUnit.SECONDS);
+                executorService.awaitTermination(timeout, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
                 new RuntimeException(e);
             }
